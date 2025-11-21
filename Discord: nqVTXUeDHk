@@ -1,24 +1,6 @@
 -- GitanXUI_Pro.lua
 -- Polished, full-featured Roblox UI Module suitable for hosting on GitHub.
 -- Designed to be required from a LocalScript (client). Original implementation inspired by modern menu libraries.
--- API:
---   local GitanXUI = require(path.to.GitanXUI_Pro)
---   local win = GitanXUI.CreateWindow(opts)
---   local tab = win:CreateTab("Name", "🏠")
---   local sec = tab:CreateSection("Section Title")
---   sec:CreateButton({Name="Do", Callback=function() end})
---   local t = sec:CreateToggle({Name="On", Default=false, Callback=function(v) end})
---   local s = sec:CreateSlider({Name="Val", Min=1, Max=10, Default=5, Step=1, Callback=function(v) end})
---   -- etc.
--- Features:
---   - Window dragging, minimize/close
---   - Tabs & Sections
---   - Buttons, Toggles, Sliders (Step, Reversed, Decimals), Dropdowns, Textboxes, Keybinds, ColorPicker (RGB)
---   - Floating value preview for sliders, snapping, touch support
---   - Notifications queue
---   - Save/Load config (Player attributes)
---   - Demo() to preview
--- NOTE: This is a client ModuleScript (LocalScript must require it). Host file on GitHub raw if you want dynamic loading.
 
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
@@ -26,7 +8,7 @@ local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 
 local GitanXUI = {}
-GitanXUI.__version = "pro-1.0.0"
+GitanXUI.__version = "pro-1.0.1-fixed-colorpicker"
 
 -- Default theme (tweakable)
 GitanXUI.DefaultTheme = {
@@ -670,7 +652,7 @@ function GitanXUI.CreateWindow(opts)
                 return {Container = cont, GetValue = GetValue, SetValue = SetValue}
             end
 
-            -- Dropdown, Textbox, Keybind, ColorPicker implemented above similarly
+            -- Dropdown
             function section:CreateDropdown(opts)
                 opts = opts or {}
                 local lbl = opts.Name or "Dropdown"
@@ -731,23 +713,68 @@ function GitanXUI.CreateWindow(opts)
                 return {Button = btn, Get = function() return btn.Text end}
             end
 
+            -- CreateColorPicker (fixed: uses local labels instead of attaching fields to Instances)
             function section:CreateColorPicker(opts)
                 opts = opts or {}
                 local default = opts.Default or {80,160,255}
                 local cb = opts.Callback or function() end
-                local container = Instance.new("Frame", inner); container.Size = UDim2.new(1,0,0,96); container.BackgroundTransparency = 1
-                local lbl = Instance.new("TextLabel", container); lbl.Size = UDim2.new(1, -16, 0, 18); lbl.Position = UDim2.new(0,8,0,0)
-                lbl.BackgroundTransparency = 1; lbl.Font = Enum.Font.Gotham; lbl.Text = opts.Name or "Color"; lbl.TextColor3 = window.Theme.Text; lbl.TextSize = 13
-                local preview = Instance.new("Frame", container); preview.Size = UDim2.fromOffset(56,56); preview.Position = UDim2.new(1,-72,0,22)
-                preview.BackgroundColor3 = Color3.fromRGB(default[1], default[2], default[3]); makeCorner(preview, 10); makeStroke(preview, Color3.fromRGB(0,0,0),1,0.9)
+
+                local container = Instance.new("Frame", inner)
+                container.Size = UDim2.new(1,0,0,96)
+                container.BackgroundTransparency = 1
+
+                local lbl = Instance.new("TextLabel", container)
+                lbl.Size = UDim2.new(1, -16, 0, 18)
+                lbl.Position = UDim2.new(0,8,0,0)
+                lbl.BackgroundTransparency = 1
+                lbl.Font = Enum.Font.Gotham
+                lbl.Text = opts.Name or "Color"
+                lbl.TextColor3 = window.Theme.Text
+                lbl.TextSize = 13
+                lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+                local preview = Instance.new("Frame", container)
+                preview.Size = UDim2.fromOffset(56,56)
+                preview.Position = UDim2.new(1,-72,0,22)
+                preview.BackgroundColor3 = Color3.fromRGB(default[1], default[2], default[3])
+                makeCorner(preview,10)
+                makeStroke(preview, Color3.fromRGB(0,0,0),1,0.9)
 
                 local function smallSlider(y, labelTxt, init)
-                    local scont = Instance.new("Frame", container); scont.Size = UDim2.new(1, -96, 0, 22); scont.Position = UDim2.new(0,8,0,y); scont.BackgroundTransparency = 1
-                    local name = Instance.new("TextLabel", scont); name.Size = UDim2.new(0,28,1,0); name.BackgroundTransparency = 1; name.Text = labelTxt; name.Font = Enum.Font.GothamBold; name.TextSize = 12; name.TextColor3 = window.Theme.Text
-                    local bar = Instance.new("Frame", scont); bar.Size = UDim2.new(1, -60, 1, 0); bar.Position = UDim2.new(0,36,0,0); bar.BackgroundColor3 = Color3.fromRGB(36,36,40); makeCorner(bar,6); makeStroke(bar, Color3.fromRGB(0,0,0),1,0.9)
-                    local fill = Instance.new("Frame", bar); local iv = clamp((init or 128), 0, 255)
-                    fill.Size = UDim2.new(iv/255, 0, 1, 0); fill.BackgroundColor3 = GitanXUI.DefaultTheme.Accent; makeCorner(fill,6)
-                    local valLbl = Instance.new("TextLabel", scont); valLbl.Size = UDim2.new(0,28,1,0); valLbl.Position = UDim2.new(1,-28,0,0); valLbl.BackgroundTransparency = 1; valLbl.Text = tostring(math.floor(iv)); valLbl.Font = Enum.Font.Gotham; valLbl.TextSize = 12; valLbl.TextColor3 = window.Theme.Muted
+                    local scont = Instance.new("Frame", container)
+                    scont.Size = UDim2.new(1, -96, 0, 22)
+                    scont.Position = UDim2.new(0,8,0,y)
+                    scont.BackgroundTransparency = 1
+
+                    local name = Instance.new("TextLabel", scont)
+                    name.Size = UDim2.new(0,28,1,0)
+                    name.BackgroundTransparency = 1
+                    name.Text = labelTxt
+                    name.Font = Enum.Font.GothamBold
+                    name.TextSize = 12
+                    name.TextColor3 = window.Theme.Text
+
+                    local bar = Instance.new("Frame", scont)
+                    bar.Size = UDim2.new(1, -60, 1, 0)
+                    bar.Position = UDim2.new(0,36,0,0)
+                    bar.BackgroundColor3 = Color3.fromRGB(36,36,40)
+                    makeCorner(bar,6); makeStroke(bar, Color3.fromRGB(0,0,0),1,0.9)
+
+                    local fill = Instance.new("Frame", bar)
+                    local iv = clamp((init or 128), 0, 255)
+                    fill.Size = UDim2.new(iv/255, 0, 1, 0)
+                    fill.BackgroundColor3 = GitanXUI.DefaultTheme.Accent
+                    makeCorner(fill,6)
+
+                    local valLbl = Instance.new("TextLabel", scont)
+                    valLbl.Size = UDim2.new(0,28,1,0)
+                    valLbl.Position = UDim2.new(1,-28,0,0)
+                    valLbl.BackgroundTransparency = 1
+                    valLbl.Text = tostring(math.floor(iv))
+                    valLbl.Font = Enum.Font.Gotham
+                    valLbl.TextSize = 12
+                    valLbl.TextColor3 = window.Theme.Muted
+
                     local dragging = false
                     local function updateFromX(x)
                         if bar.AbsoluteSize.X <= 0 then return end
@@ -758,21 +785,26 @@ function GitanXUI.CreateWindow(opts)
                     bar.InputBegan:Connect(function(inp) if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then dragging = true; updateFromX(inp.Position.X) end end)
                     bar.InputChanged:Connect(function(inp) if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then updateFromX(inp.Position.X) end end)
                     bar.InputEnded:Connect(function(inp) if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.UserInputType == Enum.UserInputType.Touch then dragging = false end end)
+
                     return fill, valLbl
                 end
 
                 local rfill, rlbl = smallSlider(22, "R", default[1] or 80)
                 local gfill, glbl = smallSlider(44, "G", default[2] or 160)
                 local bfill, blbl = smallSlider(66, "B", default[3] or 255)
-                container._r, container._g, container._b = rlbl, glbl, blbl
+
+                -- Use local variables (closures) instead of setting container._r etc.
+                local rLabel, gLabel, bLabel = rlbl, glbl, blbl
 
                 spawn(function()
                     while container.Parent do
-                        local r = tonumber(container._r.Text) or 0
-                        local g = tonumber(container._g.Text) or 0
-                        local b = tonumber(container._b.Text) or 0
+                        local r = tonumber(rLabel.Text) or 0
+                        local g = tonumber(gLabel.Text) or 0
+                        local b = tonumber(bLabel.Text) or 0
                         local c = Color3.fromRGB(clamp(r,0,255), clamp(g,0,255), clamp(b,0,255))
-                        preview.BackgroundColor3 = c
+                        if preview and preview.Parent then
+                            preview.BackgroundColor3 = c
+                        end
                         pcall(cb, c)
                         wait(0.12)
                     end
@@ -781,17 +813,23 @@ function GitanXUI.CreateWindow(opts)
                 return {
                     Container = container,
                     Get = function()
-                        local r = tonumber(container._r.Text) or 0
-                        local g = tonumber(container._g.Text) or 0
-                        local b = tonumber(container._b.Text) or 0
+                        local r = tonumber(rLabel.Text) or 0
+                        local g = tonumber(gLabel.Text) or 0
+                        local b = tonumber(bLabel.Text) or 0
                         return Color3.fromRGB(clamp(r,0,255), clamp(g,0,255), clamp(b,0,255))
                     end,
                     Set = function(col)
                         if typeof(col) == "Color3" then
-                            local r,g,b = math.floor(col.R*255+0.5), math.floor(col.G*255+0.5), math.floor(col.B*255+0.5)
-                            container._r.Text, container._g.Text, container._b.Text = tostring(clamp(r,0,255)), tostring(clamp(g,0,255)), tostring(clamp(b,0,255))
+                            local rr = math.floor(col.R*255+0.5)
+                            local gg = math.floor(col.G*255+0.5)
+                            local bb = math.floor(col.B*255+0.5)
+                            if rLabel then rLabel.Text = tostring(clamp(rr,0,255)) end
+                            if gLabel then gLabel.Text = tostring(clamp(gg,0,255)) end
+                            if bLabel then bLabel.Text = tostring(clamp(bb,0,255)) end
                         elseif type(col) == "table" and #col >= 3 then
-                            container._r.Text, container._g.Text, container._b.Text = tostring(clamp(math.floor(col[1]),0,255)), tostring(clamp(math.floor(col[2]),0,255)), tostring(clamp(math.floor(col[3]),0,255))
+                            if rLabel then rLabel.Text = tostring(clamp(math.floor(col[1]),0,255)) end
+                            if gLabel then gLabel.Text = tostring(clamp(math.floor(col[2]),0,255)) end
+                            if bLabel then bLabel.Text = tostring(clamp(math.floor(col[3]),0,255)) end
                         end
                     end
                 }
