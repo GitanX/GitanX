@@ -13,7 +13,7 @@ local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 
 local GitanXUI = {}
-GitanXUI.__version = "2.1.0"
+GitanXUI.__version = "2.2.0"
 
 -- Default (modern) theme — tweak or pass custom Theme in CreateWindow opts
 GitanXUI.DefaultTheme = {
@@ -38,6 +38,13 @@ local function tween(inst, props, time, style, dir)
     if ok and t then
         pcall(function() t:Play() end)
     end
+end
+
+-- clamp helper (global for module)
+local function clamp(val, a, b)
+    if a and val < a then return a end
+    if b and val > b then return b end
+    return val
 end
 
 -- UI primitives
@@ -68,10 +75,8 @@ end
 local function getPlayerGui()
     local pl = Players.LocalPlayer
     if pl then
-        -- WaitForChild is safe; if PlayerGui exists it will be returned
         return pl:WaitForChild("PlayerGui")
     end
-    -- fallback for contexts where LocalPlayer isn't available
     return game:GetService("CoreGui")
 end
 
@@ -360,7 +365,6 @@ function GitanXUI.CreateWindow(opts)
             lbl.BackgroundTransparency = 1
             lbl.Text = title or ""
             lbl.Font = Enum.Font.GothamBold
-            -- Use window.Theme (tab doesn't have Theme); window comes from outer scope
             lbl.TextColor3 = window.Theme.Text
             lbl.TextSize = 14
             lbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -470,22 +474,26 @@ function GitanXUI.CreateWindow(opts)
                 }
             end
 
-            -- Slider (CreateSlider)
+            -- Slider (CreateSlider) - improved: supports Step, Reversed, GetValue/SetValue
             function sectionObj:CreateSlider(opts)
                 local labelText = opts.Name or "Slider"
-                local min = opts.Min or 0
-                local max = opts.Max or 1
-                local initial = opts.Default or min
+                local min = (opts.Min ~= nil) and opts.Min or 0
+                local max = (opts.Max ~= nil) and opts.Max or 1
+                local initial = (opts.Default ~= nil) and opts.Default or min
                 local callback = opts.Callback or function() end
+                local step = opts.Step -- optional (number)
+                local reversed = opts.Reversed and true or false
 
                 local range = max - min
                 if range == 0 then range = 1 end
 
-                -- clamp helper
-                local function clamp(val, a, b)
-                    if val < a then return a end
-                    if val > b then return b end
-                    return val
+                -- auto-step default: if min/max are integer and step not provided -> step = 1
+                if step == nil then
+                    if math.abs(min - math.floor(min)) < 1e-6 and math.abs(max - math.floor(max)) < 1e-6 then
+                        step = 1
+                    else
+                        step = 0 -- continuous
+                    end
                 end
 
                 local cont = Instance.new("Frame", inner)
@@ -518,38 +526,83 @@ function GitanXUI.CreateWindow(opts)
                 makeCorner(bar, 6)
                 makeStroke(bar, Color3.fromRGB(0,0,0),1,0.9)
 
-                local relInit = clamp((initial - min) / range, 0, 1)
+                local relInitMapped = clamp((initial - min) / (max - min), 0, 1)
+                -- determine initial visual position: if reversed, visual handle should show where the mouse would be,
+                -- i.e. raw position = inverse of mapped.
+                local relInitRaw = reversed and (1 - relInitMapped) or relInitMapped
+
                 local fill = Instance.new("Frame", bar)
-                fill.Size = UDim2.new(relInit, 0, 1, 0)
+                fill.Size = UDim2.new(relInitRaw, 0, 1, 0)
                 fill.BackgroundColor3 = window.Theme.Accent
                 makeCorner(fill, 6)
 
                 local handle = Instance.new("Frame", bar)
                 handle.Size = UDim2.fromOffset(14,14)
                 handle.AnchorPoint = Vector2.new(0.5, 0.5)
-                handle.Position = UDim2.new(relInit, 0, 0.5, 0)
+                handle.Position = UDim2.new(relInitRaw, 0, 0.5, 0)
                 handle.BackgroundColor3 = Color3.fromRGB(250,250,250)
                 makeCorner(handle, 8)
                 makeStroke(handle, Color3.fromRGB(0,0,0),1,0.9)
 
                 local dragging = false
+
+                local function quantizeValue(raw)
+                    if step and step > 0 then
+                        local steps = math.floor((raw - min) / step + 0.5)
+                        return clamp(min + steps * step, min, max)
+                    end
+                    return raw
+                end
+
+                local function formatValueNumber(v)
+                    if step and step > 0 and math.abs(step - math.floor(step)) < 1e-6 then
+                        return tostring(math.floor(v + 0.5))
+                    else
+                        -- if v is whole, display as integer
+                        if math.abs(v - math.floor(v)) < 1e-6 then
+                            return tostring(math.floor(v))
+                        end
+                        return string.format("%.2f", v)
+                    end
+                end
+
                 local function updateFromX(x)
                     local absX = bar.AbsolutePosition.X
                     local absW = bar.AbsoluteSize.X
                     if absW <= 0 then return end
-                    local rel = clamp((x - absX) / absW, 0, 1)
-                    fill.Size = UDim2.new(rel, 0, 1, 0)
-                    handle.Position = UDim2.new(rel, 0, 0.5, 0)
-                    local value = min + (max - min) * rel
-                    -- format smartly: if range is integer show 2 decimals only when needed
-                    if math.abs(value - math.floor(value)) < 1e-6 then
-                        valLbl.Text = tostring(math.floor(value))
-                    else
-                        valLbl.Text = string.format("%.2f", value)
-                    end
+                    local relRaw = clamp((x - absX) / absW, 0, 1) -- position of handle relative 0..1 (visual)
+                    -- mapped rel (logical value) takes reversed into account
+                    local relMapped = reversed and (1 - relRaw) or relRaw
+                    local rawValue = min + relMapped * (max - min)
+                    local value = quantizeValue(rawValue)
+                    -- compute relMapped after quantization to set display properly
+                    local relMappedAfter = (value - min) / (max - min)
+                    -- visual position might need to reflect quantized position; compute corresponding raw pos
+                    local visualRelAfter = reversed and (1 - relMappedAfter) or relMappedAfter
+
+                    fill.Size = UDim2.new(visualRelAfter, 0, 1, 0)
+                    handle.Position = UDim2.new(visualRelAfter, 0, 0.5, 0)
+
+                    valLbl.Text = formatValueNumber(value)
                     pcall(callback, value)
                 end
 
+                -- safe connections: wait for bar absolute size update if needed
+                local connAbs
+                connAbs = bar:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+                    -- ensure handle/ fill are positioned correctly once AbsoluteSize is known
+                    local absW = bar.AbsoluteSize.X
+                    if absW > 0 then
+                        -- set initial visual based on initial value
+                        local initMapped = clamp((initial - min) / (max - min), 0, 1)
+                        local visualInit = reversed and (1 - initMapped) or initMapped
+                        fill.Size = UDim2.new(visualInit, 0, 1, 0)
+                        handle.Position = UDim2.new(visualInit, 0, 0.5, 0)
+                        if connAbs then connAbs:Disconnect(); connAbs = nil end
+                    end
+                end)
+
+                -- Input handling (bar + handle)
                 bar.InputBegan:Connect(function(inp)
                     if inp.UserInputType == Enum.UserInputType.MouseButton1 then
                         dragging = true
@@ -565,7 +618,6 @@ function GitanXUI.CreateWindow(opts)
                     if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
                 end)
 
-                -- also allow dragging by handle specifically
                 handle.InputBegan:Connect(function(inp)
                     if inp.UserInputType == Enum.UserInputType.MouseButton1 then
                         dragging = true
@@ -580,23 +632,31 @@ function GitanXUI.CreateWindow(opts)
                     if inp.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
                 end)
 
+                -- API
                 local function setValue(v)
-                    local rel = clamp((v - min) / (max - min == 0 and 1 or (max - min)), 0, 1)
-                    fill.Size = UDim2.new(rel, 0, 1, 0)
-                    handle.Position = UDim2.new(rel, 0, 0.5, 0)
-                    local value = min + (max - min) * rel
-                    if math.abs(value - math.floor(value)) < 1e-6 then
-                        valLbl.Text = tostring(math.floor(value))
-                    else
-                        valLbl.Text = string.format("%.2f", value)
-                    end
-                    pcall(callback, value)
+                    v = tonumber(v) or min
+                    v = clamp(v, min, max)
+                    v = quantizeValue(v)
+                    local relMapped = (v - min) / (max - min)
+                    local visualRel = reversed and (1 - relMapped) or relMapped
+                    fill.Size = UDim2.new(visualRel, 0, 1, 0)
+                    handle.Position = UDim2.new(visualRel, 0, 0.5, 0)
+                    valLbl.Text = formatValueNumber(v)
+                    pcall(callback, v)
                 end
+
+                local function getValue()
+                    local text = valLbl.Text
+                    return tonumber(text) or (min)
+                end
+
+                -- initialize displayed value
+                setValue(initial)
 
                 return {
                     Container = cont,
-                    GetValue = function() return tonumber(valLbl.Text) end,
-                    SetValue = function(v) setValue(tonumber(v) or min) end
+                    GetValue = getValue,
+                    SetValue = setValue
                 }
             end
 
@@ -770,7 +830,7 @@ function GitanXUI.CreateWindow(opts)
                     bar.BackgroundColor3 = Color3.fromRGB(36,36,40)
                     makeCorner(bar, 6); makeStroke(bar, Color3.fromRGB(0,0,0),1,0.9)
                     local fill = Instance.new("Frame", bar)
-                    local initVal = clamp and (init or 128) or (init or 128)
+                    local initVal = clamp((init or 128), 0, 255)
                     fill.Size = UDim2.new((initVal)/255, 0, 1, 0)
                     fill.BackgroundColor3 = GitanXUI.DefaultTheme.Accent
                     makeCorner(fill, 6)
@@ -785,7 +845,8 @@ function GitanXUI.CreateWindow(opts)
 
                     local dragging = false
                     local function updateFromX(x)
-                        local rel = math.clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+                        if bar.AbsoluteSize.X <= 0 then return end
+                        local rel = clamp((x - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
                         fill.Size = UDim2.new(rel, 0, 1, 0)
                         valLbl.Text = tostring(math.floor(rel * 255))
                     end
@@ -833,14 +894,14 @@ function GitanXUI.CreateWindow(opts)
                     end,
                     Set = function(col)
                         if typeof(col) == "Color3" then
-                            local r, g, b = math.clamp(math.floor(col.R * 255), 0, 255), math.clamp(math.floor(col.G * 255), 0, 255), math.clamp(math.floor(col.B * 255), 0, 255)
+                            local r, g, b = math.clamp and math.clamp(math.floor(col.R * 255), 0, 255) or clamp(math.floor(col.R * 255),0,255), math.clamp and math.clamp(math.floor(col.G * 255), 0, 255) or clamp(math.floor(col.G * 255),0,255), math.clamp and math.clamp(math.floor(col.B * 255), 0, 255) or clamp(math.floor(col.B * 255),0,255)
                             container._r.Text = tostring(r)
                             container._g.Text = tostring(g)
                             container._b.Text = tostring(b)
                         elseif type(col) == "table" and #col >= 3 then
-                            container._r.Text = tostring(math.clamp(math.floor(col[1]),0,255))
-                            container._g.Text = tostring(math.clamp(math.floor(col[2]),0,255))
-                            container._b.Text = tostring(math.clamp(math.floor(col[3]),0,255))
+                            container._r.Text = tostring(clamp(math.floor(col[1]),0,255))
+                            container._g.Text = tostring(clamp(math.floor(col[2]),0,255))
+                            container._b.Text = tostring(clamp(math.floor(col[3]),0,255))
                         end
                     end
                 }
@@ -889,7 +950,10 @@ function GitanXUI.Demo()
     local s1 = home:CreateSection("Welcome")
     s1:CreateButton({Name="Say Hello", Callback=function() w:Notify("Hello","Welcome to GitanX",2) end})
     s1:CreateToggle({Name="Demo Toggle", Default=false, Callback=function(v) w:Notify("Demo Toggle", tostring(v), 1.2) end})
-    s1:CreateSlider({Name="Demo Slider", Min=0, Max=10, Default=3, Callback=function(v) print("slider", v) end})
+    -- Example: integer slider 1..4 with steps of 1
+    s1:CreateSlider({Name="Demo Slider", Min=1, Max=4, Default=2, Step=1, Callback=function(v) print("slider", v) end})
+    -- Example: reversed slider 1..4 (moving right decreases value)
+    s1:CreateSlider({Name="Reversed Slider", Min=1, Max=4, Default=3, Step=1, Reversed=true, Callback=function(v) print("rev slider", v) end})
 
     local fish = w:CreateTab("Fishing", "🎣")
     local sf = fish:CreateSection("Actions")
